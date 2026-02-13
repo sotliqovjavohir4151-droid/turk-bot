@@ -1,11 +1,20 @@
 import asyncio
 import os
 from aiogram import Bot, Dispatcher
-from aiogram.types import Message
 from aiogram.filters import CommandStart
+from aiogram.types import Message
 
-TOKEN = os.getenv("8564026272:AAGFcUZO7hK8OhX4RIZoy4Ap8be5eYa-6PI")
+TOKEN = os.getenv("TOKEN")
 
-bot = Bot(token=8564026272:AAGFcUZO7hK8OhX4RIZoy4Ap8be5eYa-6PI)
+bot = Bot(token=TOKEN)
 dp = Dispatcher()
-Commit changes
+
+@dp.message(CommandStart())
+async def start(message: Message):
+    await message.answer("Bot ishlayapti!")
+
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
