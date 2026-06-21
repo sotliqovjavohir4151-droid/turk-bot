@@ -12,8 +12,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     CallbackQuery,
-    WebAppInfo,
-    BufferedInputFile
+    WebAppInfo
 )
 from aiogram import F
 from aiogram.exceptions import TelegramNetworkError, TelegramConflictError
@@ -40,7 +39,6 @@ dp = Dispatcher()
 
 # =============== CONSTANTS ===============
 ADMIN_USER_ID = 8735290324
-BANNER_FILE = "welcome.jpg"
 DB_PATH = "users.db"
 
 # =============== DATABASE ===============
@@ -149,27 +147,6 @@ def get_about_text():
         "🚀 Turk Ustoz bilan turk tilini oson va samarali o'rganing!"
     )
 
-async def send_banner(message: Message, caption: str, reply_markup=None):
-    try:
-        if os.path.exists(BANNER_FILE):
-            with open(BANNER_FILE, "rb") as f:
-                photo_data = f.read()
-            
-            photo = BufferedInputFile(photo_data, filename="welcome.jpg")
-            
-            await message.answer_photo(
-                photo=photo,
-                caption=caption,
-                reply_markup=reply_markup
-            )
-            logger.info("✅ Rasm yuborildi!")
-            return True
-    except Exception as e:
-        logger.error(f"Rasm xatosi: {e}")
-    
-    await message.answer(caption, reply_markup=reply_markup)
-    return False
-
 # =============== HANDLERLAR ===============
 
 @dp.message(CommandStart())
@@ -183,7 +160,11 @@ async def start(message: Message):
         keyboard = get_main_keyboard()
         caption = get_main_caption()
         
-        await send_banner(message, caption, keyboard)
+        # Rasm olib tashlandi - faqat matn yuboriladi
+        await message.answer(
+            caption,
+            reply_markup=keyboard
+        )
             
     except Exception as e:
         logger.error(f"Start xatosi: {e}")
@@ -203,21 +184,10 @@ async def about(callback: CallbackQuery):
             ]
         )
         
-        # Xabar turini tekshirish
-        if callback.message.text:
-            # Agar matnli xabar bo'lsa - tahrirlash
-            await callback.message.edit_text(
-                get_about_text(),
-                reply_markup=about_keyboard
-            )
-        else:
-            # Agar rasmli xabar bo'lsa - o'chirib, yangi yuborish
-            await callback.message.delete()
-            await callback.message.answer(
-                get_about_text(),
-                reply_markup=about_keyboard
-            )
-        
+        await callback.message.edit_text(
+            get_about_text(),
+            reply_markup=about_keyboard
+        )
         await callback.answer()
     except Exception as e:
         logger.error(f"About xatosi: {e}")
@@ -238,7 +208,10 @@ async def back_to_menu(callback: CallbackQuery):
         caption = get_main_caption()
         
         await callback.message.delete()
-        await send_banner(callback.message, caption, keyboard)
+        await callback.message.answer(
+            caption,
+            reply_markup=keyboard
+        )
         await callback.answer()
     except Exception as e:
         logger.error(f"Back menu xatosi: {e}")
@@ -287,10 +260,13 @@ async def start_web_server():
     return runner
 
 # =============== SHUTDOWN ===============
+shutdown_event = asyncio.Event()
+
 async def shutdown(loop, signal=None):
     if signal:
-        logger.info(f"Signal: {signal.name}")
+        logger.info(f"Received signal {signal.name}")
     logger.info("Bot to'xtatilmoqda...")
+    shutdown_event.set()
     await bot.session.close()
     await dp.stop_polling()
     logger.info("Bot to'xtatildi!")
@@ -302,37 +278,57 @@ async def main():
     
     await asyncio.to_thread(init_db)
     
-    if os.path.exists(BANNER_FILE):
-        logger.info(f"✅ {BANNER_FILE} topildi")
-    else:
-        logger.warning(f"⚠️ {BANNER_FILE} topilmadi")
-    
+    # Webhook'ni o'chirish
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("✅ Webhook o'chirildi")
     except Exception as e:
         logger.error(f"Webhook xatosi: {e}")
     
+    # Signal handler
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(loop, s)))
+            loop.add_signal_handler(
+                sig, 
+                lambda s=sig: asyncio.create_task(shutdown(loop, s))
+            )
         except NotImplementedError:
             pass
     
+    # Web serverni ishga tushirish
     try:
         web_runner = await start_web_server()
     except Exception as e:
         logger.error(f"Web server xatosi: {e}")
         web_runner = None
     
-    try:
-        await dp.start_polling(bot)
-    except Exception as e:
-        logger.error(f"Bot xatosi: {e}")
+    # Botni ishga tushirish
+    retry_count = 0
+    max_retries = 10
+    
+    while retry_count < max_retries and not shutdown_event.is_set():
+        try:
+            logger.info(f"Bot polling ishga tushmoqda...")
+            await dp.start_polling(bot)
+            break
+        except TelegramConflictError as e:
+            retry_count += 1
+            logger.error(f"Conflict xatosi ({retry_count}/{max_retries}): {e}")
+            try:
+                await bot.delete_webhook(drop_pending_updates=True)
+            except:
+                pass
+            if retry_count < max_retries and not shutdown_event.is_set():
+                await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"Bot polling xatosi: {e}")
+            break
     
     if web_runner:
         await web_runner.cleanup()
+    
+    logger.info("Bot to'xtatildi!")
 
 if __name__ == "__main__":
     try:
