@@ -7,7 +7,8 @@ from aiogram.types import (
     Message,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    CallbackQuery
+    CallbackQuery,
+    WebAppInfo  # WebAppInfo ni import qilish kerak
 )
 from aiohttp import web
 
@@ -21,6 +22,12 @@ dp = Dispatcher()
 async def start(message: Message):
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🚀 Ilovani ochish",
+                    web_app=WebAppInfo(url="https://turkish-path--sotliqovjavohir.replit.app")  # web_app orqali
+                )
+            ],
             [
                 InlineKeyboardButton(
                     text="📢 Rasmiy kanal",
@@ -49,7 +56,7 @@ async def start(message: Message):
         "✅ Testlar\n"
         "✅ So‘z yodlash mashqlari\n"
         "✅ Interaktiv Mini App\n"
-        "✅ Loyihaga kirish uchun chap tomon pastdagi \"Boshlash\" tugmasini bosing\n\n"  # Qo'shtirnoq xatosi tuzatildi
+        "✅ Loyihaga kirish uchun \"Ilovani ochish\" tugmasini bosing\n\n"
         "Kerakli bo‘limni tanlang 👇",
         reply_markup=keyboard
     )
