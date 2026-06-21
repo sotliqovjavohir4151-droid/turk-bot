@@ -11,10 +11,11 @@ from aiogram.types import (
     InlineKeyboardButton,
     CallbackQuery,
     WebAppInfo,
-    InputFile
+    FSInputFile
 )
 from aiogram import F
 from aiogram.exceptions import TelegramNetworkError, TelegramConflictError
+from aiohttp import web
 
 # =============== LOGGING ===============
 logging.basicConfig(
@@ -32,15 +33,15 @@ if not TOKEN:
     logger.error("❌ BOT_TOKEN topilmadi!")
     sys.exit(1)
 
-# Botni webhook o'chirib ishga tushiramiz
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 # =============== CONSTANTS ===============
 ADMIN_USER_ID = 8735290324
 BANNER_FILE = "welcome.jpg"
+BANNER_FILE_ID = None  # Telegram file_id saqlash uchun
 
-# =============== FUNCTIONS ===============
+# =============== ASOSIY FUNKSIYALAR ===============
 
 def get_main_keyboard():
     """Asosiy menyu tugmalari"""
@@ -86,31 +87,39 @@ def get_main_caption():
     )
 
 async def send_banner(message: Message, caption: str, reply_markup=None):
-    """Banner rasmni yuborish"""
+    """Banner rasmni yuborish - bir necha usul bilan"""
+    
+    # 1-USUL: Local fayl orqali
     try:
         if os.path.exists(BANNER_FILE):
-            logger.info("Rasm yuborilmoqda...")
-            photo = InputFile(BANNER_FILE)
+            logger.info("Lokal fayl orqali yuborishga urinish...")
+            photo = FSInputFile(BANNER_FILE)
             
             await message.answer_photo(
                 photo=photo,
                 caption=caption,
                 reply_markup=reply_markup
             )
-            logger.info("✅ Rasm yuborildi!")
+            logger.info("✅ Rasm lokal fayl orqali yuborildi!")
             return True
+    except TelegramNetworkError as e:
+        logger.error(f"Lokal fayl xatosi: {e}")
     except Exception as e:
-        logger.error(f"Rasm yuborishda xatolik: {e}")
+        logger.error(f"Lokal fayl yuborishda xatolik: {e}")
     
-    # Fallback - matn yuborish
+    # 2-USUL: Matn yuborish (fallback)
     logger.warning("Rasm yuborib bo'lmadi, matn yuborilmoqda...")
-    await message.answer(
-        caption,
-        reply_markup=reply_markup
-    )
-    return False
+    try:
+        await message.answer(
+            caption,
+            reply_markup=reply_markup
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Matn yuborishda xatolik: {e}")
+        return False
 
-# =============== HANDLERS ===============
+# =============== HANDLERLAR ===============
 
 @dp.message(CommandStart())
 async def start(message: Message):
@@ -210,20 +219,34 @@ async def handle_special_word(message: Message):
     except Exception as e:
         logger.error(f"Special word handlerda xatolik: {e}")
 
-# =============== SHUTDOWN HANDLER ===============
+# =============== WEB SERVER (RENDER UCHUN) ===============
+async def health_check(request):
+    return web.Response(text="Bot ishlayapti!")
+
+async def start_web_server():
+    """Render uchun web server"""
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    app.router.add_get("/health", health_check)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"🌐 Web server {port} portda ishga tushdi")
+    return runner
+
+# =============== SHUTDOWN ===============
 async def shutdown(loop, signal=None):
     """Botni to'g'ri o'chirish"""
     if signal:
         logger.info(f"Received exit signal {signal.name}...")
     
     logger.info("Bot to'xtatilmoqda...")
-    
-    # Bot sessionni to'g'ri yopish
     await bot.session.close()
-    
-    # Pollingni to'xtatish
     await dp.stop_polling()
-    
     logger.info("Bot to'xtatildi!")
 
 # =============== MAIN ===============
@@ -231,17 +254,14 @@ async def shutdown(loop, signal=None):
 async def main():
     logger.info("🤖 Bot ishga tushmoqda...")
     
-    # Fayl mavjudligini tekshirish
+    # Faylni tekshirish
     if os.path.exists(BANNER_FILE):
         file_size = os.path.getsize(BANNER_FILE)
-        logger.info(f"✅ {BANNER_FILE} topildi. Hajmi: {file_size} bayt ({file_size / 1024:.2f} KB)")
-        
-        if file_size > 20 * 1024 * 1024:
-            logger.warning(f"⚠️ Rasm hajmi 20MB dan katta!")
+        logger.info(f"✅ {BANNER_FILE} topildi. Hajmi: {file_size} bayt")
     else:
         logger.warning(f"⚠️ {BANNER_FILE} topilmadi!")
     
-    # Webhook'ni o'chirish (eski instance'larni to'xtatish uchun)
+    # Webhook'ni o'chirish - CONFLICT xatosini oldini olish
     try:
         logger.info("Webhook'ni o'chirish...")
         await bot.delete_webhook(drop_pending_updates=True)
@@ -252,24 +272,50 @@ async def main():
     # Signal handler'lar
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(
-            sig,
-            lambda s=sig: asyncio.create_task(shutdown(loop, s))
-        )
+        try:
+            loop.add_signal_handler(
+                sig,
+                lambda s=sig: asyncio.create_task(shutdown(loop, s))
+            )
+        except NotImplementedError:
+            # Windows uchun
+            pass
     
-    # Botni polling bilan ishga tushirish
+    # Web serverni ishga tushirish (Render uchun)
     try:
-        await dp.start_polling(bot)
-    except TelegramConflictError as e:
-        logger.error(f"Conflict xatosi: {e}")
-        logger.info("Bot boshqa instance'da ishlayapti. 5 soniya kutib qayta urinaman...")
-        await asyncio.sleep(5)
-        # Webhook'ni qayta o'chirish
-        await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot)
+        web_runner = await start_web_server()
     except Exception as e:
-        logger.error(f"Bot ishga tushishda xatolik: {e}")
-        raise
+        logger.error(f"Web server xatosi: {e}")
+        web_runner = None
+    
+    # Botni ishga tushirish (qayta urinish bilan)
+    retry_count = 0
+    max_retries = 10
+    
+    while retry_count < max_retries:
+        try:
+            logger.info(f"Bot polling ishga tushmoqda (urinish {retry_count + 1}/{max_retries})...")
+            await dp.start_polling(bot)
+            break
+        except TelegramConflictError as e:
+            retry_count += 1
+            logger.error(f"Conflict xatosi ({retry_count}/{max_retries}): {e}")
+            logger.info(f"Webhook'ni qayta o'chirish...")
+            try:
+                await bot.delete_webhook(drop_pending_updates=True)
+            except:
+                pass
+            if retry_count < max_retries:
+                wait_time = min(5 * retry_count, 30)
+                logger.info(f"{wait_time} soniya kutib qayta urinaman...")
+                await asyncio.sleep(wait_time)
+        except Exception as e:
+            logger.error(f"Bot polling xatosi: {e}")
+            break
+    
+    # Web serverni to'xtatish
+    if web_runner:
+        await web_runner.cleanup()
 
 if __name__ == "__main__":
     try:
