@@ -203,10 +203,21 @@ async def about(callback: CallbackQuery):
             ]
         )
         
-        await callback.message.edit_text(
-            get_about_text(),
-            reply_markup=about_keyboard
-        )
+        # Xabar turini tekshirish
+        if callback.message.text:
+            # Agar matnli xabar bo'lsa - tahrirlash
+            await callback.message.edit_text(
+                get_about_text(),
+                reply_markup=about_keyboard
+            )
+        else:
+            # Agar rasmli xabar bo'lsa - o'chirib, yangi yuborish
+            await callback.message.delete()
+            await callback.message.answer(
+                get_about_text(),
+                reply_markup=about_keyboard
+            )
+        
         await callback.answer()
     except Exception as e:
         logger.error(f"About xatosi: {e}")
@@ -218,7 +229,7 @@ async def about(callback: CallbackQuery):
             )
         except:
             pass
-        await callback.answer()
+        await callback.answer("Xatolik yuz berdi", show_alert=True)
 
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: CallbackQuery):
@@ -231,6 +242,7 @@ async def back_to_menu(callback: CallbackQuery):
         await callback.answer()
     except Exception as e:
         logger.error(f"Back menu xatosi: {e}")
+        await callback.answer("Xatolik yuz berdi", show_alert=True)
 
 @dp.message()
 async def handle_special_word(message: Message):
@@ -242,7 +254,6 @@ async def handle_special_word(message: Message):
             if user_id == ADMIN_USER_ID:
                 await message.bot.send_chat_action(message.chat.id, "typing")
                 
-                # Faqat foydalanuvchilar soni
                 total_users = await asyncio.to_thread(get_total_users)
                 
                 stats_text = f"📊 **BARCHA FOYDALANUVCHILAR**\n\n"
