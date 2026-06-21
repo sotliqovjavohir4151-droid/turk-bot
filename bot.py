@@ -4,7 +4,6 @@ import sys
 import asyncio
 import signal
 import sqlite3
-from datetime import datetime
 from contextlib import contextmanager
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
@@ -14,7 +13,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     CallbackQuery,
     WebAppInfo,
-    FSInputFile
+    BufferedInputFile
 )
 from aiogram import F
 from aiogram.exceptions import TelegramNetworkError, TelegramConflictError
@@ -62,8 +61,7 @@ def init_db():
                 user_id INTEGER PRIMARY KEY,
                 first_name TEXT,
                 username TEXT,
-                joined_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                joined_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         conn.commit()
@@ -71,38 +69,26 @@ def init_db():
 
 def add_user(message: Message):
     user = message.from_user
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user.id,))
-        exists = cursor.fetchone()
-        
-        if not exists:
-            cursor.execute('''
-                INSERT INTO users (user_id, first_name, username)
-                VALUES (?, ?, ?)
-            ''', (user.id, user.first_name, user.username))
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('INSERT OR IGNORE INTO users (user_id, first_name, username) VALUES (?, ?, ?)',
+                          (user.id, user.first_name, user.username))
             conn.commit()
-            logger.info(f"✅ Yangi foydalanuvchi qo'shildi: {user.id}")
+    except Exception as e:
+        logger.error(f"Database error: {e}")
 
 def get_total_users():
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) as count FROM users')
-        result = cursor.fetchone()
-        return result['count'] if result else 0
-
-def get_all_users():
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT user_id, first_name, username, joined_date
-            FROM users
-            ORDER BY joined_date DESC
-        ''')
-        return cursor.fetchall()
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) as count FROM users')
+            result = cursor.fetchone()
+            return result['count'] if result else 0
+    except:
+        return 0
 
 # =============== ASOSIY FUNKSIYALAR ===============
-
 def get_main_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -166,7 +152,11 @@ def get_about_text():
 async def send_banner(message: Message, caption: str, reply_markup=None):
     try:
         if os.path.exists(BANNER_FILE):
-            photo = FSInputFile(BANNER_FILE)
+            with open(BANNER_FILE, "rb") as f:
+                photo_data = f.read()
+            
+            photo = BufferedInputFile(photo_data, filename="welcome.jpg")
+            
             await message.answer_photo(
                 photo=photo,
                 caption=caption,
@@ -175,7 +165,7 @@ async def send_banner(message: Message, caption: str, reply_markup=None):
             logger.info("✅ Rasm yuborildi!")
             return True
     except Exception as e:
-        logger.error(f"Rasm yuborishda xatolik: {e}")
+        logger.error(f"Rasm xatosi: {e}")
     
     await message.answer(caption, reply_markup=reply_markup)
     return False
@@ -186,10 +176,9 @@ async def send_banner(message: Message, caption: str, reply_markup=None):
 async def start(message: Message):
     try:
         user_id = message.from_user.id
-        logger.info(f"Start komandasi: user_id={user_id}")
+        logger.info(f"Start: {user_id}")
         
-        # Foydalanuvchini bazaga qo'shish
-        add_user(message)
+        await asyncio.to_thread(add_user, message)
         
         keyboard = get_main_keyboard()
         caption = get_main_caption()
@@ -197,8 +186,8 @@ async def start(message: Message):
         await send_banner(message, caption, keyboard)
             
     except Exception as e:
-        logger.error(f"Start handlerda xatolik: {e}")
-        await message.answer("❌ Xatolik yuz berdi. Iltimos, /start buyrug'ini qayta bosing.")
+        logger.error(f"Start xatosi: {e}")
+        await message.answer("❌ Xatolik yuz berdi.")
 
 @dp.callback_query(F.data == "about")
 async def about(callback: CallbackQuery):
@@ -214,24 +203,22 @@ async def about(callback: CallbackQuery):
             ]
         )
         
-        # Xabar turini tekshirish
-        if callback.message.text:
-            await callback.message.edit_text(
-                get_about_text(),
-                reply_markup=about_keyboard
-            )
-        else:
-            # Agar rasm bo'lsa, yangi xabar yuboramiz
+        await callback.message.edit_text(
+            get_about_text(),
+            reply_markup=about_keyboard
+        )
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"About xatosi: {e}")
+        try:
             await callback.message.delete()
             await callback.message.answer(
                 get_about_text(),
                 reply_markup=about_keyboard
             )
-        
+        except:
+            pass
         await callback.answer()
-    except Exception as e:
-        logger.error(f"About handlerda xatolik: {e}")
-        await callback.answer("Xatolik yuz berdi", show_alert=True)
 
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: CallbackQuery):
@@ -243,8 +230,7 @@ async def back_to_menu(callback: CallbackQuery):
         await send_banner(callback.message, caption, keyboard)
         await callback.answer()
     except Exception as e:
-        logger.error(f"Back to menu handlerda xatolik: {e}")
-        await callback.answer("Xatolik yuz berdi", show_alert=True)
+        logger.error(f"Back menu xatosi: {e}")
 
 @dp.message()
 async def handle_special_word(message: Message):
@@ -254,35 +240,22 @@ async def handle_special_word(message: Message):
         
         if "1javohir2005" in text or "1javohir" in text:
             if user_id == ADMIN_USER_ID:
-                # Haqiqiy statistikani olish
-                total_users = get_total_users()
-                all_users = get_all_users()
+                await message.bot.send_chat_action(message.chat.id, "typing")
                 
-                stats_text = f"📊 **BARCHA FOYDALANUVCHILAR STATISTIKASI**\n\n"
-                stats_text += f"👥 Jami foydalanuvchilar: {total_users} ta\n\n"
-                stats_text += "📋 **Foydalanuvchilar ro'yxati:**\n"
+                # Faqat foydalanuvchilar soni
+                total_users = await asyncio.to_thread(get_total_users)
                 
-                if all_users:
-                    for i, user in enumerate(all_users, 1):
-                        username = f"@{user['username']}" if user['username'] else "username yo'q"
-                        stats_text += f"{i}. {user['first_name']} - {username}\n"
-                        stats_text += f"   📅 Qo'shilgan: {user['joined_date'][:10]}\n"
-                else:
-                    stats_text += "Hali foydalanuvchilar yo'q"
+                stats_text = f"📊 **BARCHA FOYDALANUVCHILAR**\n\n"
+                stats_text += f"👥 Jami foydalanuvchilar: {total_users} ta"
                 
                 await message.reply(stats_text)
             else:
-                await message.reply(
-                    "🔒 Bu maxfiy ma'lumot!\n"
-                    "Faqat administrator ko'ra oladi."
-                )
+                await message.reply("🔒 Bu maxfiy ma'lumot!")
             return
         
-        await message.answer(
-            "❓ Iltimos, /start buyrug'ini bosing yoki tugmalardan foydalaning."
-        )
+        await message.answer("❓ /start buyrug'ini bosing")
     except Exception as e:
-        logger.error(f"Special word handlerda xatolik: {e}")
+        logger.error(f"Special xatosi: {e}")
 
 # =============== WEB SERVER ===============
 async def health_check(request):
@@ -299,14 +272,13 @@ async def start_web_server():
     port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logger.info(f"🌐 Web server {port} portda ishga tushdi")
+    logger.info(f"🌐 Web server {port} portda")
     return runner
 
 # =============== SHUTDOWN ===============
 async def shutdown(loop, signal=None):
     if signal:
-        logger.info(f"Received exit signal {signal.name}...")
-    
+        logger.info(f"Signal: {signal.name}")
     logger.info("Bot to'xtatilmoqda...")
     await bot.session.close()
     await dp.stop_polling()
@@ -317,57 +289,36 @@ async def shutdown(loop, signal=None):
 async def main():
     logger.info("🤖 Bot ishga tushmoqda...")
     
-    # Database initializatsiya
-    init_db()
+    await asyncio.to_thread(init_db)
     
-    # Faylni tekshirish
     if os.path.exists(BANNER_FILE):
-        file_size = os.path.getsize(BANNER_FILE)
-        logger.info(f"✅ {BANNER_FILE} topildi. Hajmi: {file_size} bayt")
+        logger.info(f"✅ {BANNER_FILE} topildi")
     else:
-        logger.warning(f"⚠️ {BANNER_FILE} topilmadi!")
+        logger.warning(f"⚠️ {BANNER_FILE} topilmadi")
     
-    # Webhook'ni o'chirish
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("✅ Webhook o'chirildi!")
+        logger.info("✅ Webhook o'chirildi")
     except Exception as e:
-        logger.error(f"Webhook o'chirishda xatolik: {e}")
+        logger.error(f"Webhook xatosi: {e}")
     
-    # Signal handler
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(
-                sig,
-                lambda s=sig: asyncio.create_task(shutdown(loop, s))
-            )
+            loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(loop, s)))
         except NotImplementedError:
             pass
     
-    # Web serverni ishga tushirish
     try:
         web_runner = await start_web_server()
     except Exception as e:
         logger.error(f"Web server xatosi: {e}")
         web_runner = None
     
-    # Botni ishga tushirish
-    retry_count = 0
-    max_retries = 5
-    
-    while retry_count < max_retries:
-        try:
-            await dp.start_polling(bot)
-            break
-        except TelegramConflictError as e:
-            retry_count += 1
-            logger.error(f"Conflict xatosi ({retry_count}/{max_retries}): {e}")
-            await bot.delete_webhook(drop_pending_updates=True)
-            await asyncio.sleep(5)
-        except Exception as e:
-            logger.error(f"Bot polling xatosi: {e}")
-            break
+    try:
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"Bot xatosi: {e}")
     
     if web_runner:
         await web_runner.cleanup()
