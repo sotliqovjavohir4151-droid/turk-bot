@@ -1,7 +1,8 @@
 import os
 import logging
 import sys
-from aiogram import Bot, Dispatcher, types
+import asyncio
+from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import (
     Message,
@@ -10,13 +11,11 @@ from aiogram.types import (
     CallbackQuery,
     WebAppInfo,
     FSInputFile,
-    BufferedInputFile
+    InputFile
 )
 from aiogram import F
-from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramNetworkError
 import aiohttp
-import asyncio
 
 # =============== LOGGING ===============
 logging.basicConfig(
@@ -37,10 +36,13 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# =============== ADMIN USER ID ===============
+# =============== CONSTANTS ===============
 ADMIN_USER_ID = 8735290324
+BANNER_FILE = "welcome.jpg"
+BANNER_FILE_ID = None  # Telegram file_id saqlash uchun
 
-# =============== ASOSIY MENYU FUNKSIYASI ===============
+# =============== FUNCTIONS ===============
+
 def get_main_keyboard():
     """Asosiy menyu tugmalari"""
     return InlineKeyboardMarkup(
@@ -73,7 +75,6 @@ def get_main_keyboard():
     )
 
 def get_main_caption():
-    """Asosiy menyu caption matni"""
     return (
         "🇹🇷 Turk Ustoz botiga xush kelibsiz!\n\n"
         "📚 Turk tilini o'rganish uchun zamonaviy platforma.\n\n"
@@ -85,69 +86,123 @@ def get_main_caption():
         "Kerakli bo'limni tanlang 👇"
     )
 
-# =============== RASMNI TEKSHIRISH FUNKSIYASI ===============
-def get_banner_photo():
-    """Rasm faylini tekshirib, mavjud bo'lsa qaytaradi"""
-    try:
-        if os.path.exists("welcome.jpg"):
-            file_size = os.path.getsize("welcome.jpg")
-            logger.info(f"Rasm topildi. Hajmi: {file_size} bayt")
+async def get_banner_file():
+    """Rasm faylini olish - lokal fayl yoki Telegram file_id"""
+    global BANNER_FILE_ID
+    
+    # 1-usul: Lokal fayldan yuklash
+    if os.path.exists(BANNER_FILE):
+        try:
+            file_size = os.path.getsize(BANNER_FILE)
+            logger.info(f"Lokal fayl topildi: {BANNER_FILE}, hajmi: {file_size} bayt")
             
+            # Fayl hajmini tekshirish (Telegram 20MB limit)
             if file_size > 20 * 1024 * 1024:
-                logger.warning("Rasm hajmi 20MB dan katta!")
+                logger.warning(f"Fayl hajmi {file_size} bayt, 20MB dan katta!")
                 return None
             
-            return FSInputFile("welcome.jpg")
-        else:
-            logger.warning("Rasm fayli topilmadi: welcome.jpg")
-            return None
-    except Exception as e:
-        logger.error(f"Rasmni tekshirishda xatolik: {e}")
+            # Faylni InputFile sifatida o'qish
+            with open(BANNER_FILE, "rb") as f:
+                file_data = f.read()
+            
+            # Agar fayl bo'sh bo'lsa
+            if not file_data:
+                logger.warning("Fayl bo'sh!")
+                return None
+            
+            logger.info(f"Fayl o'qildi, uzunlik: {len(file_data)} bayt")
+            return InputFile(BANNER_FILE)
+            
+        except PermissionError:
+            logger.error(f"Faylga ruxsat yo'q: {BANNER_FILE}")
+        except OSError as e:
+            logger.error(f"Faylni o'qishda OSError: {e}")
+        except Exception as e:
+            logger.error(f"Faylni o'qishda xatolik: {e}")
+        return None
+    
+    # 2-usul: Agar BANNER_FILE_ID saqlangan bo'lsa
+    elif BANNER_FILE_ID:
+        logger.info(f"File_ID dan foydalanilmoqda: {BANNER_FILE_ID}")
+        return BANNER_FILE_ID
+    
+    # 3-usul: URL dan yuklash (agar lokal fayl bo'lmasa)
+    else:
+        logger.warning("Lokal fayl topilmadi va File_ID mavjud emas")
         return None
 
-# =============== /start HANDLER ===============
+async def send_banner(message: Message, caption: str, reply_markup=None):
+    """Banner rasmni yuborish - bir necha usul bilan"""
+    
+    # 1-usul: Lokal fayl
+    try:
+        if os.path.exists(BANNER_FILE):
+            logger.info("Lokal fayl orqali yuborishga urinish...")
+            photo = FSInputFile(BANNER_FILE)
+            
+            await message.answer_photo(
+                photo=photo,
+                caption=caption,
+                reply_markup=reply_markup
+            )
+            logger.info("✅ Rasm lokal fayl orqali yuborildi!")
+            return True
+    except TelegramNetworkError as e:
+        logger.error(f"Lokal fayl orqali yuborishda TelegramNetworkError: {e}")
+    except Exception as e:
+        logger.error(f"Lokal fayl orqali yuborishda xatolik: {e}")
+    
+    # 2-usul: Bytes orqali
+    try:
+        if os.path.exists(BANNER_FILE):
+            logger.info("Bytes orqali yuborishga urinish...")
+            with open(BANNER_FILE, "rb") as f:
+                file_data = f.read()
+            
+            # BufferedInputFile o'rniga InputFile ishlatamiz
+            photo = InputFile(BANNER_FILE)
+            
+            await message.answer_photo(
+                photo=photo,
+                caption=caption,
+                reply_markup=reply_markup
+            )
+            logger.info("✅ Rasm bytes orqali yuborildi!")
+            return True
+    except Exception as e:
+        logger.error(f"Bytes orqali yuborishda xatolik: {e}")
+    
+    # 3-usul: Matn yuborish (fallback)
+    logger.warning("Rasm yuborib bo'lmadi, matn yuborilmoqda...")
+    await message.answer(
+        caption,
+        reply_markup=reply_markup
+    )
+    return False
+
+# =============== HANDLERS ===============
+
 @dp.message(CommandStart())
 async def start(message: Message):
     try:
         user_id = message.from_user.id
+        logger.info(f"Start komandasi: user_id={user_id}")
         
         keyboard = get_main_keyboard()
         caption = get_main_caption()
         
-        photo = get_banner_photo()
-        
-        if photo:
-            try:
-                await message.answer_photo(
-                    photo=photo,
-                    caption=caption,
-                    reply_markup=keyboard
-                )
-                logger.info(f"Rasm yuborildi: user_id={user_id}")
-            except Exception as e:
-                logger.error(f"Rasm yuborishda xatolik: {e}")
-                await message.answer(
-                    caption,
-                    reply_markup=keyboard
-                )
-        else:
-            logger.info("Rasm topilmadi, matn yuborilmoqda")
-            await message.answer(
-                caption,
-                reply_markup=keyboard
-            )
+        # Rasmni yuborish
+        await send_banner(message, caption, keyboard)
             
     except Exception as e:
         logger.error(f"Start handlerda xatolik: {e}")
         await message.answer(
-            "❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+            "❌ Xatolik yuz berdi. Iltimos, /start buyrug'ini qayta bosing."
         )
 
-# =============== ABOUT CALLBACK HANDLER ===============
 @dp.callback_query(F.data == "about")
 async def about(callback: CallbackQuery):
     try:
-        # Orqaga qaytish tugmasi bilan about ma'lumoti
         about_keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -173,12 +228,6 @@ async def about(callback: CallbackQuery):
             "• O'quvchilar uchun qulay interfeys\n\n"
             "🎯 Maqsadimiz:\n"
             "Turk tilini o'rganishni oson, qiziqarli va samarali qilish.\n\n"
-            "📱 Mini App imkoniyatlari:\n"
-            "• Darslarni o'qish\n"
-            "• Test ishlash\n"
-            "• Natijalarni kuzatish\n"
-            "• Yangi mavzularni o'rganish\n"
-            "• Bilimingizni mustahkamlash\n\n"
             "🚀 Turk Ustoz bilan turk tilini oson va samarali o'rganing!",
             reply_markup=about_keyboard
         )
@@ -187,48 +236,24 @@ async def about(callback: CallbackQuery):
         logger.error(f"About handlerda xatolik: {e}")
         await callback.answer("Xatolik yuz berdi", show_alert=True)
 
-# =============== BACK TO MENU HANDLER ===============
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: CallbackQuery):
     try:
-        user_id = callback.from_user.id
         keyboard = get_main_keyboard()
         caption = get_main_caption()
         
-        # Rasmni qayta yuklash
-        photo = get_banner_photo()
-        
-        # Eski xabarni o'chirish
         await callback.message.delete()
         
-        if photo:
-            try:
-                await callback.message.answer_photo(
-                    photo=photo,
-                    caption=caption,
-                    reply_markup=keyboard
-                )
-            except Exception as e:
-                logger.error(f"Rasm yuborishda xatolik (back): {e}")
-                await callback.message.answer(
-                    caption,
-                    reply_markup=keyboard
-                )
-        else:
-            await callback.message.answer(
-                caption,
-                reply_markup=keyboard
-            )
+        # Rasmni qayta yuborish
+        await send_banner(callback.message, caption, keyboard)
         
         await callback.answer()
     except Exception as e:
         logger.error(f"Back to menu handlerda xatolik: {e}")
         await callback.answer("Xatolik yuz berdi", show_alert=True)
 
-# =============== MAXSUS SO'Z UCHUN HANDLER (FAQAT ADMIN) ===============
 @dp.message()
 async def handle_special_word(message: Message):
-    """Handle specific word '1Javohir2005' - faqat admin uchun"""
     try:
         user_id = message.from_user.id
         text = message.text.lower() if message.text else ""
@@ -260,16 +285,20 @@ async def handle_special_word(message: Message):
         logger.error(f"Special word handlerda xatolik: {e}")
 
 # =============== MAIN ===============
+
 async def main():
     logger.info("🤖 Bot ishga tushmoqda...")
     
-    if os.path.exists("welcome.jpg"):
-        file_size = os.path.getsize("welcome.jpg")
-        logger.info(f"✅ welcome.jpg topildi. Hajmi: {file_size} bayt")
+    # Fayl mavjudligini tekshirish
+    if os.path.exists(BANNER_FILE):
+        file_size = os.path.getsize(BANNER_FILE)
+        logger.info(f"✅ {BANNER_FILE} topildi. Hajmi: {file_size} bayt ({file_size / 1024:.2f} KB)")
+        
         if file_size > 20 * 1024 * 1024:
-            logger.warning("⚠️ Rasm hajmi 20MB dan katta!")
+            logger.warning(f"⚠️ Rasm hajmi 20MB dan katta! Telegram limiti 20MB.")
     else:
-        logger.warning("⚠️ welcome.jpg topilmadi!")
+        logger.warning(f"⚠️ {BANNER_FILE} topilmadi!")
+        logger.info("Rasm topilmasa, matn yuboriladi.")
     
     try:
         await dp.start_polling(bot)
