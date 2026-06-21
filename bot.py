@@ -19,7 +19,6 @@ dp = Dispatcher()
 
 @dp.message(CommandStart())
 async def start(message: Message):
-
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -50,22 +49,18 @@ async def start(message: Message):
         "✅ Testlar\n"
         "✅ So‘z yodlash mashqlari\n"
         "✅ Interaktiv Mini App\n"
-        "✅ Loyihaga kirish uchun "Boshlash" tugmasini bosing\n\n'
+        "✅ Loyihaga kirish uchun chap tomon pastdagi \"Boshlash\" tugmasini bosing\n\n"  # Qo'shtirnoq xatosi tuzatildi
         "Kerakli bo‘limni tanlang 👇",
-        
         reply_markup=keyboard
     )
 
 
 @dp.callback_query(lambda c: c.data == "about")
 async def about(callback: CallbackQuery):
-
     await callback.message.answer(
         "🇹🇷 TURK USTOZ\n\n"
-
         "Turk Ustoz — turk tilini o‘rganish uchun yaratilgan "
         "zamonaviy ta'lim platformasi.\n\n"
-
         "📚 Platforma imkoniyatlari:\n"
         "• A1, A2, B1, B2 darajadagi darslar\n"
         "• Mavzular bo‘yicha testlar\n"
@@ -74,20 +69,16 @@ async def about(callback: CallbackQuery):
         "• Grammatik qoidalar\n"
         "• Kundalik turkcha iboralar\n"
         "• O‘quvchilar uchun qulay interfeys\n\n"
-
         "🎯 Maqsadimiz:\n"
         "Turk tilini o‘rganishni oson, qiziqarli va samarali qilish.\n\n"
-
         "📱 Mini App imkoniyatlari:\n"
         "• Darslarni o‘qish\n"
         "• Test ishlash\n"
         "• Natijalarni kuzatish\n"
         "• Yangi mavzularni o‘rganish\n"
         "• Bilimingizni mustahkamlash\n\n"
-
         "🚀 Turk Ustoz bilan turk tilini oson va samarali o‘rganing!"
     )
-
     await callback.answer()
 
 
@@ -96,6 +87,7 @@ async def health(request):
 
 
 async def main():
+    # Web server sozlamalari
     app = web.Application()
     app.router.add_get("/", health)
 
@@ -108,6 +100,7 @@ async def main():
 
     print(f"Server {port} portda ishga tushdi")
 
+    # Botni ishga tushirish
     await dp.start_polling(bot)
 
 
