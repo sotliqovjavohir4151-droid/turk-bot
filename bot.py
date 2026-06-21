@@ -50,7 +50,7 @@ async def start(message: Message):
         "✅ Testlar\n"
         "✅ So‘z yodlash mashqlari\n"
         "✅ Interaktiv Mini App\n"
-        "✅ Loyihaga kirish uchun "Boshlash" tugmasini bosing\n\n"
+        "✅ Loyihaga kirish uchun "Boshlash" tugmasini bosing\n\n'
         "Kerakli bo‘limni tanlang 👇",
         
         reply_markup=keyboard
