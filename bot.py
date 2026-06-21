@@ -24,12 +24,6 @@ async def start(message: Message):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📱 Ilovani ochish",
-                    url="https://turkish-path--sotliqovjavohir.replit.app"
-                )
-            ],
-            [
-                InlineKeyboardButton(
                     text="📢 Rasmiy kanal",
                     url="https://t.me/turkustoz"
                 )
@@ -55,8 +49,10 @@ async def start(message: Message):
         "✅ Darslar\n"
         "✅ Testlar\n"
         "✅ So‘z yodlash mashqlari\n"
-        "✅ Interaktiv Mini App\n\n"
+        "✅ Interaktiv Mini App\n"
+        "✅ Loyihaga kirish uchun "Boshlash" tugmasini bosing\n\n"
         "Kerakli bo‘limni tanlang 👇",
+        
         reply_markup=keyboard
     )
 
