@@ -3,7 +3,12 @@ import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery
+)
 from aiohttp import web
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -31,7 +36,13 @@ async def start(message: Message):
             ],
             [
                 InlineKeyboardButton(
-                    text="👨‍💻 Admin bilan bogʻlanish",
+                    text="ℹ️ Bot haqida",
+                    callback_data="about"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="👨‍💻 Dasturchi",
                     url="https://t.me/sotiiqov"
                 )
             ]
@@ -40,9 +51,48 @@ async def start(message: Message):
 
     await message.answer(
         "🇹🇷 Turk Ustoz botiga xush kelibsiz!\n\n"
-        "Turk tilini o‘rganish uchun darslar, testlar va mashqlar platformasi.",
+        "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
+        "✅ Darslar\n"
+        "✅ Testlar\n"
+        "✅ So‘z yodlash mashqlari\n"
+        "✅ Interaktiv Mini App\n\n"
+        "Kerakli bo‘limni tanlang 👇",
         reply_markup=keyboard
     )
+
+
+@dp.callback_query(lambda c: c.data == "about")
+async def about(callback: CallbackQuery):
+
+    await callback.message.answer(
+        "🇹🇷 TURK USTOZ\n\n"
+
+        "Turk Ustoz — turk tilini o‘rganish uchun yaratilgan "
+        "zamonaviy ta'lim platformasi.\n\n"
+
+        "📚 Platforma imkoniyatlari:\n"
+        "• A1, A2, B1, B2 darajadagi darslar\n"
+        "• Mavzular bo‘yicha testlar\n"
+        "• So‘z yodlash mashqlari\n"
+        "• Interaktiv Mini App\n"
+        "• Grammatik qoidalar\n"
+        "• Kundalik turkcha iboralar\n"
+        "• O‘quvchilar uchun qulay interfeys\n\n"
+
+        "🎯 Maqsadimiz:\n"
+        "Turk tilini o‘rganishni oson, qiziqarli va samarali qilish.\n\n"
+
+        "📱 Mini App imkoniyatlari:\n"
+        "• Darslarni o‘qish\n"
+        "• Test ishlash\n"
+        "• Natijalarni kuzatish\n"
+        "• Yangi mavzularni o‘rganish\n"
+        "• Bilimingizni mustahkamlash\n\n"
+
+        "🚀 Turk Ustoz bilan turk tilini oson va samarali o‘rganing!"
+    )
+
+    await callback.answer()
 
 
 async def health(request):
@@ -59,6 +109,8 @@ async def main():
     port = int(os.getenv("PORT", 10000))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
+
+    print(f"Server {port} portda ishga tushdi")
 
     await dp.start_polling(bot)
 
