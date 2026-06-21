@@ -11,13 +11,17 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     CallbackQuery,
-    WebAppInfo
+    WebAppInfo,
+    FSInputFile  # Rasm yuborish uchun
 )
 from aiohttp import web
 
 TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+
+# =============== ADMIN USER ID ===============
+ADMIN_USER_ID = 8735290324  # SIZNING ID INGIZ
 
 # =============== DATABASE ===============
 DB_PATH = "users.db"
@@ -130,7 +134,7 @@ def add_or_update_user(message: Message):
             
             # Create initial statistics for new user
             cursor.execute('''
-                INSERT INTO user_stats (user_id) VALUES (?)
+                INSERT OR IGNORE INTO user_stats (user_id) VALUES (?)
             ''', (user.id,))
         
         conn.commit()
@@ -148,6 +152,15 @@ def update_stats(user_id: int, stat_field: str):
     """Update user statistics"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
+        # First check if user stats exist
+        cursor.execute('SELECT user_id FROM user_stats WHERE user_id = ?', (user_id,))
+        exists = cursor.fetchone()
+        
+        if not exists:
+            # Create stats if not exists
+            cursor.execute('INSERT INTO user_stats (user_id) VALUES (?)', (user_id,))
+        
+        # Update statistics
         cursor.execute(f'''
             UPDATE user_stats 
             SET {stat_field} = {stat_field} + 1
@@ -159,13 +172,18 @@ def get_user_info(user_id: int):
     """Get user information from database"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
+        
+        # First ensure user_stats exists
+        cursor.execute('INSERT OR IGNORE INTO user_stats (user_id) VALUES (?)', (user_id,))
+        conn.commit()
+        
         cursor.execute('''
             SELECT 
                 u.*,
-                s.commands_used,
-                s.web_app_opened,
-                s.about_viewed,
-                s.channel_visited
+                COALESCE(s.commands_used, 0) as commands_used,
+                COALESCE(s.web_app_opened, 0) as web_app_opened,
+                COALESCE(s.about_viewed, 0) as about_viewed,
+                COALESCE(s.channel_visited, 0) as channel_visited
             FROM users u
             LEFT JOIN user_stats s ON u.user_id = s.user_id
             WHERE u.user_id = ?
@@ -183,6 +201,28 @@ def get_user_activity(user_id: int, limit: int = 5):
             ORDER BY action_date DESC 
             LIMIT ?
         ''', (user_id, limit))
+        return cursor.fetchall()
+
+def get_all_users_stats():
+    """Get statistics for all users (admin only)"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT 
+                u.user_id,
+                u.first_name,
+                u.username,
+                u.joined_date,
+                u.last_active,
+                u.total_interactions,
+                COALESCE(s.commands_used, 0) as commands_used,
+                COALESCE(s.web_app_opened, 0) as web_app_opened,
+                COALESCE(s.about_viewed, 0) as about_viewed,
+                COALESCE(s.channel_visited, 0) as channel_visited
+            FROM users u
+            LEFT JOIN user_stats s ON u.user_id = s.user_id
+            ORDER BY u.joined_date DESC
+        ''')
         return cursor.fetchall()
 
 # =============== BOT HANDLERS ===============
@@ -231,15 +271,21 @@ async def start(message: Message):
         ]
     )
 
-    await message.answer(
-        f"🇹🇷 Turk Ustoz botiga xush kelibsiz, {message.from_user.first_name}! 👋\n\n"
-        "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
-        "✅ Darslar\n"
-        "✅ Testlar\n"
-        "✅ So‘z yodlash mashqlari\n"
-        "✅ Interaktiv Mini App\n"
-        "✅ Loyihaga kirish uchun \"Ilovani ochish\" tugmasini bosing\n\n"
-        "Kerakli bo‘limni tanlang 👇",
+    # Rasm bilan yuborish
+    photo = FSInputFile("turk_ustoz_banner.jpg")  # Rasm fayli nomi
+    
+    await message.answer_photo(
+        photo=photo,
+        caption=(
+            f"🇹🇷 Turk Ustoz botiga xush kelibsiz, {message.from_user.first_name}🍃! 👋\n\n"
+            "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
+            "✅ Darslar\n"
+            "✅ Testlar\n"
+            "✅ So‘z yodlash mashqlari\n"
+            "✅ Interaktiv Mini App\n"
+            "✅ Loyihaga kirish uchun \"Ilovani ochish\" tugmasini bosing\n\n"
+            "Kerakli bo‘limni tanlang 👇"
+        ),
         reply_markup=keyboard
     )
 
@@ -254,40 +300,37 @@ async def handle_special_word(message: Message):
     if "1javohir2005" in text or "1javohir" in text:
         log_activity(user_id, "special_word_triggered")
         
-        # Create special keyboard
-        special_keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="👨‍💻 Dasturchi bilan bog'lanish",
-                        url="https://t.me/sotiiqov"
+        # Check if user is admin
+        if user_id == ADMIN_USER_ID:
+            # ADMIN - show all users statistics
+            all_stats = get_all_users_stats()
+            
+            if all_stats:
+                stats_text = "📊 **BARCHA FOYDALANUVCHILAR STATISTIKASI**\n\n"
+                stats_text += f"👥 Jami foydalanuvchilar: {len(all_stats)}\n\n"
+                
+                for i, user in enumerate(all_stats[:20], 1):  # Show last 20 users
+                    stats_text += (
+                        f"{i}. 👤 {user['first_name']}\n"
+                        f"   🔹 @{user['username'] or 'mavjud emas'}\n"
+                        f"   📅 Qo'shilgan: {user['joined_date'][:10]}\n"
+                        f"   💬 Muloqotlar: {user['total_interactions']}\n"
+                        f"   📈 /start: {user['commands_used']} | Web: {user['web_app_opened']}\n\n"
                     )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="📊 Statistika",
-                        callback_data="my_stats"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="🔙 Orqaga",
-                        callback_data="back_to_menu"
-                    )
-                ]
-            ]
-        )
-        
-        await message.reply(
-            "🌟 **JAVOHIR DEV** 🌟\n\n"
-            "👨‍💻 Dasturchi: Javohir Sotliqov\n"
-            "📱 Telegram: @sotiiqov\n"
-            "💻 GitHub: github.com/javohirdev\n"
-            "🚀 Loyiha: Turk Ustoz\n\n"
-            "✨ Bu bot va web app Javohir tomonidan yaratilgan!\n"
-            "💡 Har qanday savol va takliflar uchun bog'lanishingiz mumkin.",
-            reply_markup=special_keyboard
-        )
+                
+                if len(all_stats) > 20:
+                    stats_text += f"... va yana {len(all_stats) - 20} ta foydalanuvchi"
+                
+                await message.reply(stats_text)
+            else:
+                await message.reply("❌ Hali foydalanuvchilar yo'q!")
+        else:
+            # NON-ADMIN - show only their own stats
+            await message.reply(
+                "🔒 Bu maxfiy ma'lumot!\n"
+                "Faqat administrator ko'ra oladi.\n\n"
+                "Siz o'z statistikangizni 📊 Mening statistikam tugmasi orqali ko'rishingiz mumkin."
+            )
         return
     
     # Handle other messages
@@ -336,14 +379,21 @@ async def back_to_menu(callback: CallbackQuery):
         ]
     )
     
-    await callback.message.edit_text(
-        "🇹🇷 Turk Ustoz botiga xush kelibsiz! 👋\n\n"
-        "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
-        "✅ Darslar\n"
-        "✅ Testlar\n"
-        "✅ So‘z yodlash mashqlari\n"
-        "✅ Interaktiv Mini App\n\n"
-        "Kerakli bo‘limni tanlang 👇",
+    # Rasm bilan qaytarish
+    photo = FSInputFile("turk_ustoz_banner.jpg")
+    
+    await callback.message.delete()  # Oldingi xabarni o'chirish
+    await callback.message.answer_photo(
+        photo=photo,
+        caption=(
+            "🇹🇷 Turk Ustoz botiga xush kelibsiz! 👋\n\n"
+            "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
+            "✅ Darslar\n"
+            "✅ Testlar\n"
+            "✅ So‘z yodlash mashqlari\n"
+            "✅ Interaktiv Mini App\n\n"
+            "Kerakli bo‘limni tanlang 👇"
+        ),
         reply_markup=keyboard
     )
     await callback.answer()
@@ -388,8 +438,12 @@ async def my_stats(callback: CallbackQuery):
     recent_activity = get_user_activity(user_id)
     
     if user_info:
-        joined_date = datetime.strptime(user_info['joined_date'], '%Y-%m-%d %H:%M:%S')
-        last_active = datetime.strptime(user_info['last_active'], '%Y-%m-%d %H:%M:%S')
+        try:
+            joined_date = datetime.strptime(user_info['joined_date'], '%Y-%m-%d %H:%M:%S')
+            last_active = datetime.strptime(user_info['last_active'], '%Y-%m-%d %H:%M:%S')
+        except:
+            joined_date = datetime.now()
+            last_active = datetime.now()
         
         stats_text = (
             f"📊 Sizning statistikangiz\n\n"
@@ -399,21 +453,29 @@ async def my_stats(callback: CallbackQuery):
             f"🕐 Oxirgi faollik: {last_active.strftime('%d.%m.%Y %H:%M')}\n"
             f"💬 Umumiy muloqotlar: {user_info['total_interactions']}\n\n"
             f"📈 Faoliyat ko'rsatkichlari:\n"
-            f"• /start buyrug'i: {user_info['commands_used']} marta\n"
-            f"• Web App ochilgan: {user_info['web_app_opened']} marta\n"
-            f"• Bot haqida ko'rilgan: {user_info['about_viewed']} marta\n"
-            f"• Kanalga o'tilgan: {user_info['channel_visited']} marta\n"
+            f"• /start buyrug'i: {user_info['commands_used'] or 0} marta\n"
+            f"• Web App ochilgan: {user_info['web_app_opened'] or 0} marta\n"
+            f"• Bot haqida ko'rilgan: {user_info['about_viewed'] or 0} marta\n"
+            f"• Kanalga o'tilgan: {user_info['channel_visited'] or 0} marta\n"
         )
         
-        if recent_activity:
+        if recent_activity and len(recent_activity) > 0:
             stats_text += "\n🔄 So'nggi faollik:\n"
-            for activity in recent_activity:
-                date = datetime.strptime(activity['action_date'], '%Y-%m-%d %H:%M:%S')
-                stats_text += f"• {activity['action']} - {date.strftime('%d.%m %H:%M')}\n"
+            for activity in recent_activity[:5]:
+                try:
+                    date = datetime.strptime(activity['action_date'], '%Y-%m-%d %H:%M:%S')
+                    stats_text += f"• {activity['action']} - {date.strftime('%d.%m %H:%M')}\n"
+                except:
+                    stats_text += f"• {activity['action']}\n"
         
         await callback.message.answer(stats_text)
     else:
-        await callback.message.answer("❌ Ma'lumot topilmadi!")
+        # If user not found in database, add them
+        add_or_update_user(callback.message)
+        await callback.message.answer(
+            "📊 Sizning statistikangiz hali yaratilmagan.\n"
+            "Iltimos, avval /start buyrug'ini bosing!"
+        )
     
     await callback.answer()
 
@@ -434,7 +496,7 @@ async def health(request):
     return web.Response(text="Turk Ustoz Bot ishlayapti!")
 
 async def stats_api(request):
-    """API endpoint to get user statistics"""
+    """API endpoint to get user statistics (admin only)"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -455,6 +517,7 @@ async def main():
     # Initialize database
     init_db()
     print("✅ Database initialized")
+    print(f"👑 Admin ID: {ADMIN_USER_ID}")
     
     # Web server setup
     app = web.Application()
