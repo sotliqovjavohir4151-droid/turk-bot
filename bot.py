@@ -5,6 +5,9 @@ from datetime import datetime
 from contextlib import contextmanager
 import logging
 import sys
+import io
+import aiohttp
+import base64
 
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
@@ -14,7 +17,8 @@ from aiogram.types import (
     InlineKeyboardButton,
     CallbackQuery,
     WebAppInfo,
-    FSInputFile
+    FSInputFile,  # FSInputFile ishlatamiz
+    BufferedInputFile
 )
 from aiogram.client.default import DefaultBotProperties
 from aiohttp import web
@@ -42,7 +46,7 @@ bot = Bot(
     default=DefaultBotProperties(
         parse_mode="HTML",
     ),
-    timeout=60,
+    timeout=120,  # Timeoutni oshiramiz
 )
 
 dp = Dispatcher()
@@ -53,6 +57,15 @@ ADMIN_USER_ID = 8735290324
 # =============== DATABASE ===============
 DB_PATH = "users.db"
 
+# =============== RASM URL ===============
+# O'zingizning rasmingiz URL manzilini qo'ying
+BANNER_IMAGE_URL = "https://telegra.ph/file/your-image.jpg"  # <-- URL ni o'zgartiring
+
+# Agar URL bo'lmasa, quyidagi BASE64 dan foydalaning
+# BASE64 kodni shu yerga qo'ying (men tayyorlab beraman)
+BANNER_IMAGE_BASE64 = ""
+
+# =============== DATABASE FUNCTIONS ===============
 @contextmanager
 def get_db_connection():
     """Database connection context manager"""
@@ -248,6 +261,53 @@ def get_all_users_stats():
         ''')
         return cursor.fetchall()
 
+# =============== RASMNI YUKLASH FUNKSIYASI ===============
+async def download_image(url):
+    """Rasmni URL dan yuklash"""
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    image_data = await response.read()
+                    return image_data
+                else:
+                    logger.error(f"Rasm yuklanmadi: {response.status}")
+                    return None
+    except Exception as e:
+        logger.error(f"Rasm yuklash xatosi: {e}")
+        return None
+
+async def get_banner_image():
+    """Rasmni olish (URL yoki BASE64 dan)"""
+    try:
+        # 1-usul: URL dan
+        if BANNER_IMAGE_URL and BANNER_IMAGE_URL.startswith('http'):
+            image_data = await download_image(BANNER_IMAGE_URL)
+            if image_data:
+                # Vaqtinchalik faylga yozamiz
+                temp_path = "temp_banner.jpg"
+                with open(temp_path, 'wb') as f:
+                    f.write(image_data)
+                return FSInputFile(temp_path)
+        
+        # 2-usul: BASE64 dan
+        if BANNER_IMAGE_BASE64:
+            image_data = base64.b64decode(BANNER_IMAGE_BASE64)
+            temp_path = "temp_banner.jpg"
+            with open(temp_path, 'wb') as f:
+                f.write(image_data)
+            return FSInputFile(temp_path)
+        
+        # 3-usul: Mahalliy fayl
+        if os.path.exists("turk_ustoz_banner.jpg"):
+            return FSInputFile("turk_ustoz_banner.jpg")
+        
+        return None
+    except Exception as e:
+        logger.error(f"Rasm tayyorlash xatosi: {e}")
+        return None
+
 # =============== BOT HANDLERS ===============
 
 def get_main_keyboard():
@@ -298,66 +358,41 @@ async def start(message: Message):
         update_stats(user_id, "commands_used")
         
         keyboard = get_main_keyboard()
+        caption = (
+            f"🇹🇷 Turk Ustoz botiga xush kelibsiz, {message.from_user.first_name}🍃! 👋\n\n"
+            "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
+            "✅ Darslar\n"
+            "✅ Testlar\n"
+            "✅ So‘z yodlash mashqlari\n"
+            "✅ Interaktiv Mini App\n"
+            "✅ Loyihaga kirish uchun \"Ilovani ochish\" tugmasini bosing\n\n"
+            "Kerakli bo‘limni tanlang 👇"
+        )
         
-        # Rasmni yuborishga harakat qilamiz
+        # Rasmni yukashga harakat qilamiz
         try:
-            # Rasm fayli mavjudligini tekshirish
-            if os.path.exists("turk_ustoz_banner.jpg"):
-                photo = FSInputFile("turk_ustoz_banner.jpg")
+            banner_image = await get_banner_image()
+            
+            if banner_image:
                 await message.answer_photo(
-                    photo=photo,
-                    caption=(
-                        f"🇹🇷 Turk Ustoz botiga xush kelibsiz, {message.from_user.first_name}🍃! 👋\n\n"
-                        "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
-                        "✅ Darslar\n"
-                        "✅ Testlar\n"
-                        "✅ So‘z yodlash mashqlari\n"
-                        "✅ Interaktiv Mini App\n"
-                        "✅ Loyihaga kirish uchun \"Ilovani ochish\" tugmasini bosing\n\n"
-                        "Kerakli bo‘limni tanlang 👇"
-                    ),
+                    photo=banner_image,
+                    caption=caption,
                     reply_markup=keyboard
                 )
+                # Vaqtinchalik faylni tozalash
+                if os.path.exists("temp_banner.jpg"):
+                    os.remove("temp_banner.jpg")
             else:
-                # Rasm topilmasa matn yuboramiz
-                logger.warning("Rasm fayli topilmadi: turk_ustoz_banner.jpg")
+                # Rasm yo'q bo'lsa matn yuborish
                 await message.answer(
-                    f"🇹🇷 Turk Ustoz botiga xush kelibsiz, {message.from_user.first_name}🍃! 👋\n\n"
-                    "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
-                    "✅ Darslar\n"
-                    "✅ Testlar\n"
-                    "✅ So‘z yodlash mashqlari\n"
-                    "✅ Interaktiv Mini App\n"
-                    "✅ Loyihaga kirish uchun \"Ilovani ochish\" tugmasini bosing\n\n"
-                    "Kerakli bo‘limni tanlang 👇",
+                    caption,
                     reply_markup=keyboard
                 )
-        except FileNotFoundError:
-            # Fayl topilmasa
-            logger.warning("FileNotFoundError: turk_ustoz_banner.jpg")
-            await message.answer(
-                f"🇹🇷 Turk Ustoz botiga xush kelibsiz, {message.from_user.first_name}🍃! 👋\n\n"
-                "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
-                "✅ Darslar\n"
-                "✅ Testlar\n"
-                "✅ So‘z yodlash mashqlari\n"
-                "✅ Interaktiv Mini App\n"
-                "✅ Loyihaga kirish uchun \"Ilovani ochish\" tugmasini bosing\n\n"
-                "Kerakli bo‘limni tanlang 👇",
-                reply_markup=keyboard
-            )
         except Exception as e:
-            # Boshqa xatoliklar
-            logger.error(f"Rasm yuborishda xatolik: {e}")
+            logger.error(f"Rasm yuborish xatosi: {e}")
+            # Xatolik bo'lsa matn yuboramiz
             await message.answer(
-                f"🇹🇷 Turk Ustoz botiga xush kelibsiz, {message.from_user.first_name}🍃! 👋\n\n"
-                "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
-                "✅ Darslar\n"
-                "✅ Testlar\n"
-                "✅ So‘z yodlash mashqlari\n"
-                "✅ Interaktiv Mini App\n"
-                "✅ Loyihaga kirish uchun \"Ilovani ochish\" tugmasini bosing\n\n"
-                "Kerakli bo‘limni tanlang 👇",
+                caption,
                 reply_markup=keyboard
             )
             
@@ -427,35 +462,40 @@ async def back_to_menu(callback: CallbackQuery):
         log_activity(user_id, "back_to_menu")
         
         keyboard = get_main_keyboard()
+        caption = (
+            "🇹🇷 Turk Ustoz botiga xush kelibsiz! 👋\n\n"
+            "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
+            "✅ Darslar\n"
+            "✅ Testlar\n"
+            "✅ So‘z yodlash mashqlari\n"
+            "✅ Interaktiv Mini App\n\n"
+            "Kerakli bo‘limni tanlang 👇"
+        )
         
         # Delete old message
         await callback.message.delete()
         
-        # Check if image exists
-        if os.path.exists("turk_ustoz_banner.jpg"):
-            photo = FSInputFile("turk_ustoz_banner.jpg")
-            await callback.message.answer_photo(
-                photo=photo,
-                caption=(
-                    "🇹🇷 Turk Ustoz botiga xush kelibsiz! 👋\n\n"
-                    "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
-                    "✅ Darslar\n"
-                    "✅ Testlar\n"
-                    "✅ So‘z yodlash mashqlari\n"
-                    "✅ Interaktiv Mini App\n\n"
-                    "Kerakli bo‘limni tanlang 👇"
-                ),
-                reply_markup=keyboard
-            )
-        else:
+        # Rasmni yukashga harakat qilamiz
+        try:
+            banner_image = await get_banner_image()
+            
+            if banner_image:
+                await callback.message.answer_photo(
+                    photo=banner_image,
+                    caption=caption,
+                    reply_markup=keyboard
+                )
+                if os.path.exists("temp_banner.jpg"):
+                    os.remove("temp_banner.jpg")
+            else:
+                await callback.message.answer(
+                    caption,
+                    reply_markup=keyboard
+                )
+        except Exception as e:
+            logger.error(f"Rasm yuborish xatosi: {e}")
             await callback.message.answer(
-                "🇹🇷 Turk Ustoz botiga xush kelibsiz! 👋\n\n"
-                "📚 Turk tilini o‘rganish uchun zamonaviy platforma.\n\n"
-                "✅ Darslar\n"
-                "✅ Testlar\n"
-                "✅ So‘z yodlash mashqlari\n"
-                "✅ Interaktiv Mini App\n\n"
-                "Kerakli bo‘limni tanlang 👇",
+                caption,
                 reply_markup=keyboard
             )
         
@@ -601,13 +641,17 @@ async def main():
     logger.info(f"🤖 Bot ishga tushdi...")
     
     # Start bot polling with retry
-    try:
-        await dp.start_polling(bot)
-    except TelegramNetworkError as e:
-        logger.error(f"Bot polling xatosi: {e}")
-        await asyncio.sleep(5)
-        # Qayta urinish
-        await dp.start_polling(bot)
+    while True:
+        try:
+            await dp.start_polling(bot)
+        except TelegramNetworkError as e:
+            logger.error(f"Bot polling xatosi: {e}")
+            await asyncio.sleep(10)
+            continue
+        except Exception as e:
+            logger.error(f"Kutilmagan xatolik: {e}")
+            await asyncio.sleep(5)
+            continue
 
 if __name__ == "__main__":
     asyncio.run(main())
